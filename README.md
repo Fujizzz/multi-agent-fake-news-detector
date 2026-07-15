@@ -1,21 +1,106 @@
-# Multi-Agent Fake-News Detector
+# Multi-Agent Fake-News Detection
 
-This repository contains a reproducible two-stage fake-news detection pipeline. Four
-specialist agents independently inspect a news item for:
+A research-oriented implementation of multi-perspective fake-news detection. The system
+decomposes a news item into four complementary analytical views—emotion,
+exaggeration, bias, and commonsense—and combines their evidence through a staged
+decision process.
 
-- emotional incitement;
-- exaggeration and clickbait;
-- one-sided or partisan bias; and
-- conflict with commonsense or basic plausibility.
+The repository currently provides a fully runnable, dependency-free reference pipeline
+with an offline provider and an OpenAI-compatible DeepSeek provider. It also documents
+the broader **Aegis** neural research blueprint developed for collaborative LoRA agents.
 
-Their weighted scores form a first-stage screening decision. Uncertain cases—and
-moderately confident fake predictions—are routed to a second verification layer. This
-keeps the original multi-agent research design while exposing a clean provider boundary.
+## Abstract
+
+Fake-news signals are heterogeneous: emotionally inflammatory language can coexist with
+sensational framing, partisan bias, and implausible claims. A single representation may
+overfit one signal and generalize poorly across events. This project studies explicit
+specialization, in which four agents produce aspect-level evidence before a team-level
+decision is made. Ambiguous samples are routed to a verification stage instead of being
+forced into a high-confidence first-pass decision.
+
+The broader Aegis design extends this idea with independently adapted encoders, gated
+multi-head communication, aspect supervision, mutual prediction, and a fused final
+classifier.
+
+## Research architecture
+
+![Aegis multi-agent architecture](docs/assets/aegis-architecture.jpg)
+
+**Figure 1. Aegis research blueprint.** One input is processed by four LoRA-adapted
+specialists. Their pooled representations interact through a gated communication module.
+Aspect heads preserve specialization, mutual-prediction heads encourage cross-agent
+collaboration, and the fused representation is passed to the final classifier.
+
+| Agent | Primary evidence |
+| --- | --- |
+| Emotion | Inflammatory, fear-inducing, or polarizing language |
+| Exaggeration | Absolutist claims, clickbait, and unsupported certainty |
+| Bias | One-sided framing, selective evidence, and derogatory positioning |
+| Commonsense | Internal inconsistency, implausibility, and conflict with common knowledge |
+
+### Collaborative learning objective
+
+The full research blueprint uses a composite objective:
+
+```text
+L = L_final + λ_dim L_dim + λ_cons L_cons + λ_pred L_pred
+    + λ_div L_div + λ_gate L_gate
+```
+
+- `L_final`: binary fake/real classification loss;
+- `L_dim`: aspect-level pseudo-label supervision from a teacher model;
+- `L_cons`: consistency between team and final predictions;
+- `L_pred`: cross-agent mutual-prediction loss;
+- `L_div`: diversity regularization to prevent specialist collapse;
+- `L_gate`: sparse communication regularization.
+
+The proposed training schedule first warms up the main and aspect tasks, then gradually
+introduces the collaborative losses.
+
+## Runnable release
+
+The code under `src/mafnd` is a lightweight, provider-independent reference
+implementation of the multi-agent decision process. Four specialist scores form the
+screening probability. Samples in the uncertainty region—and moderately confident fake
+predictions—are sent to a second verification layer.
 
 Two providers are included:
 
 - `heuristic`: deterministic, offline, dependency-free, and suitable for smoke tests;
 - `deepseek`: an OpenAI-compatible HTTP client using `DEEPSEEK_API_KEY`.
+
+> **Implementation boundary:** Figure 1 documents the full trainable Aegis blueprint.
+> The current packaged runtime validates specialist orchestration and conditional
+> verification; it does not yet train the LoRA encoders or gated communication module.
+> This distinction is intentional so the README does not claim functionality that the
+> published package cannot reproduce.
+
+## Preliminary experimental evidence
+
+The following figures were extracted from the project presentation. They are included
+to document the current research record, not as CI-reproduced benchmark claims.
+
+![PHEME event-wise metrics](docs/assets/pheme-eventwise-metrics.png)
+
+**Figure 2. Preliminary event-wise PHEME results.** The presentation reports macro
+averages of 89.74% accuracy, 84.93% F1, and 96.26% AUC across five events.
+
+![Preliminary baseline comparison](docs/assets/baseline-comparison.png)
+
+**Figure 3. Preliminary comparison with HAN, dEFEND, HMCAN, DDT, and DeepSeek-7b.**
+The extracted table does not identify its metric on the source slide. Treat these values
+as provisional until the exact split, metric definition, random seeds, checkpoints, and
+evaluation script are released and rerun.
+
+### Reproducibility status
+
+| Component | Status |
+| --- | --- |
+| Offline screening and verification | Covered by automated tests |
+| CSV and single-item inference | Covered by automated tests |
+| DeepSeek request path | Implemented; excluded from CI to avoid credentials and cost |
+| Full Aegis LoRA training | Research blueprint; not packaged in this release |
+| PHEME tables above | Presentation artifact; not reproduced by current CI |
 
 ## Installation
 
@@ -72,14 +157,12 @@ mafnd --provider deepseek --input examples/news.csv
 `DEEPSEEK_BASE_URL` defaults to `https://api.deepseek.com`; `--base-url` and `--model`
 can target another OpenAI-compatible chat-completions endpoint.
 
-## Decision flow
+## Decision rule
 
 Each specialist returns a suspicion score in `[0, 1]`. The screening probability is a
 normalized weighted average. Scores at or below `0.30` are initially real, scores at or
 above `0.70` are initially fake, and the region in between is uncertain. The second
 stage reviews uncertain cases and fake predictions below `0.90`.
-
-The defaults mirror the original prototype and can be changed through the Python API:
 
 ```python
 from mafnd import HeuristicProvider, MultiAgentDetector, NewsItem
@@ -89,7 +172,6 @@ detector = MultiAgentDetector(
     real_threshold=0.30,
     fake_threshold=0.70,
     second_layer_fake_cap=0.90,
-    self_consistency=1,
 )
 result = detector.detect(NewsItem(title="Example", content="Article text"))
 print(result.to_dict())
@@ -102,8 +184,7 @@ pytest
 ```
 
 Tests cover provider-free end-to-end detection, screening/verification behavior, weight
-validation, and CSV output. DeepSeek requests are intentionally excluded from automated
-tests to avoid network calls and credential use.
+validation, and CSV output.
 
 ## Responsible use
 
@@ -113,6 +194,6 @@ reliable external sources are required before moderation, publication, or enforc
 decisions. Only synthetic examples are included; verify dataset licenses and privacy
 requirements before redistributing real data.
 
-No open-source license has been selected for this code yet. The repository owner should
-choose one before encouraging third-party reuse. See `RESEARCH_NOTES.md` for curation
-details and the mapping to the original prototype.
+No open-source license has been selected yet. See `RESEARCH_NOTES.md` for provenance,
+curation decisions, and the relationship between the runnable release and the broader
+Aegis research blueprint.
